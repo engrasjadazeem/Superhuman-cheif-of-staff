@@ -24,6 +24,7 @@ import type {
 
 const CSV_PATH = process.env.CSV_PATH ?? "/Users/asjadazeem/Downloads/emails.csv";
 const RECORD_LIMIT = Number(process.env.CSV_RECORD_LIMIT ?? "100") || 100;
+const DEMO_MAX_RECORDS = Number(process.env.DEMO_MAX_RECORDS ?? "200") || 200;
 const BATCH_INTERVAL_SECONDS = Number(process.env.BATCH_INTERVAL_SECONDS ?? "30") || 30;
 const BATCH_SIZE = Number(process.env.BATCH_SIZE ?? "10") || 10;
 
@@ -40,6 +41,9 @@ let status: ProcessingStatus = {
 };
 
 let queue: EmailRecord[] = [];
+let cachedRecords: EmailRecord[] | null = null;
+let cachedPath: string | null = null;
+let cachedLimit: number | null = null;
 let knowledgeUpdates: MemoryUpdate[] = [];
 let informationFlow: IntelligenceUpdates["informationFlow"] = [];
 let conflicts: Conflict[] = [];
@@ -110,6 +114,15 @@ export async function startProcessing(): Promise<ProcessingStatus> {
     return getStatus();
   }
 
+  if (status.status === "completed" && status.processed > 0) {
+    logInfo("Using cached processing results", {
+      processed: status.processed,
+      results: status.results,
+      batches: status.batches
+    });
+    return getStatus();
+  }
+
   resetState();
   status.status = "running";
   status.startedAt = new Date().toISOString();
@@ -117,7 +130,21 @@ export async function startProcessing(): Promise<ProcessingStatus> {
   logInfo("CSV stream start", { path: CSV_PATH, limit: RECORD_LIMIT });
 
   try {
-    queue = await readFirstNRecords(CSV_PATH, RECORD_LIMIT);
+    const cappedLimit = Math.min(RECORD_LIMIT, DEMO_MAX_RECORDS);
+    if (RECORD_LIMIT > DEMO_MAX_RECORDS) {
+      logInfo("Demo cap applied", { requested: RECORD_LIMIT, capped: cappedLimit });
+    }
+
+    if (cachedRecords && cachedPath === CSV_PATH && cachedLimit === cappedLimit) {
+      queue = [...cachedRecords];
+      logInfo("CSV cache hit", { path: CSV_PATH, limit: cappedLimit, cached: cachedRecords.length });
+    } else {
+      queue = await readFirstNRecords(CSV_PATH, cappedLimit);
+      cachedRecords = [...queue];
+      cachedPath = CSV_PATH;
+      cachedLimit = cappedLimit;
+      logInfo("CSV cache set", { path: CSV_PATH, limit: cappedLimit, cached: cachedRecords.length });
+    }
     status.queued = queue.length;
     logInfo("CSV stream end", { queued: queue.length });
 

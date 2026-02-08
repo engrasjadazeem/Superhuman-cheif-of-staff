@@ -225,9 +225,12 @@ button.voice .dot {
 }
 
 .panel.briefing,
-.panel.stakeholder-map,
 .panel.agent-flow {
   grid-column: span 12;
+}
+
+.panel.stakeholder-map {
+  grid-column: span 6;
 }
 
 .panel.flow {
@@ -235,7 +238,7 @@ button.voice .dot {
 }
 
 .panel.knowledge {
-  grid-column: span 6;
+  grid-column: span 12;
 }
 
 .panel.clusters {
@@ -330,111 +333,127 @@ button.voice .dot {
   color: #b91c1c;
 }
 
-.flow-layout {
+.agent-flow-grid {
   display: grid;
-  grid-template-columns: minmax(320px, 1fr) minmax(260px, 320px);
+  grid-template-columns: minmax(320px, 1.2fr) minmax(240px, 0.9fr) minmax(260px, 1fr);
+  grid-template-rows: auto auto;
   gap: 16px;
-  align-items: start;
+}
+
+.agent-card {
+  background: #ffffff;
+  border-radius: 18px;
+  padding: 14px;
+  border: 1px solid rgba(148, 163, 184, 0.3);
+  box-shadow: 0 16px 40px -35px rgba(15, 23, 42, 0.3);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.flow-card {
+  grid-column: span 2;
+}
+
+.output-card {
+  grid-row: span 2;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.timeline-card {
+  grid-column: span 2;
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .flow-graph {
-  background: #f8fafc;
-  border-radius: 18px;
+  background: radial-gradient(circle at top, rgba(56, 189, 248, 0.2), transparent 55%),
+    linear-gradient(135deg, #ffffff 0%, #f1f5ff 100%);
+  border-radius: 16px;
   padding: 16px;
   position: relative;
-  min-height: 240px;
-}
-
-.overlay-stack {
-  position: absolute;
-  inset: 16px;
-  pointer-events: none;
-}
-
-.agent-nodes {
-  display: grid;
-  gap: 10px;
-  position: relative;
-  z-index: 2;
-}
-
-.agent-node {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  background: #ffffff;
-  border: 1px solid #e2e8f0;
-  border-radius: 14px;
-  padding: 10px 12px;
-  font-size: 13px;
+  min-height: 220px;
   color: #0f172a;
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: inset 0 0 30px rgba(56, 189, 248, 0.08);
 }
 
-.agent-node small {
-  text-transform: uppercase;
+.execution-map {
+  width: 100%;
+  height: 260px;
+}
+
+.execution-map .edge {
+  fill: none;
+  stroke: rgba(59, 130, 246, 0.35);
+  stroke-width: 2;
+  stroke-dasharray: 6 6;
+}
+
+.execution-map .edge.ran {
+  stroke: rgba(14, 165, 233, 0.8);
+  stroke-dasharray: 0;
+}
+
+.execution-map .edge.conflict {
+  stroke: rgba(239, 68, 68, 0.9);
+  stroke-dasharray: 0;
+}
+
+.execution-map .edge.skipped {
+  stroke: rgba(148, 163, 184, 0.4);
+  stroke-dasharray: 6 6;
+}
+
+.execution-map.animate .edge.ran {
+  stroke-dasharray: 12 8;
+  animation: flowPulse 2.2s linear infinite;
+}
+
+.agent-point circle {
+  fill: #ffffff;
+  stroke: rgba(148, 163, 184, 0.6);
+  stroke-width: 2;
+}
+
+.agent-point text {
   font-size: 10px;
-  letter-spacing: 0.08em;
+  fill: #0f172a;
+  font-weight: 600;
 }
 
-.agent-node.ran {
-  border-color: #bbf7d0;
-  background: #f0fdf4;
+.agent-point .agent-role {
+  font-size: 9px;
+  font-weight: 500;
+  fill: #64748b;
 }
 
-.agent-node.skipped {
-  border-color: #e2e8f0;
-  background: #f8fafc;
-  color: #94a3b8;
+.agent-point rect {
+  fill: #ffffff;
+  stroke: rgba(148, 163, 184, 0.6);
+  stroke-width: 2;
 }
 
-.agent-node.conflict {
-  border-color: #fecaca;
-  background: #fef2f2;
+.agent-point.ran rect {
+  stroke: rgba(34, 197, 94, 0.8);
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.3);
 }
 
-.flow-edge {
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  height: 26px;
-  border-radius: 999px;
-  border: 1px dashed rgba(148, 163, 184, 0.5);
-  opacity: 0.3;
-  animation: pulseEdge 2s ease-in-out infinite;
+.agent-point.conflict rect {
+  stroke: rgba(239, 68, 68, 0.9);
 }
 
-.flow-edge.ran {
-  border-style: solid;
-  opacity: 0.6;
-}
-
-.flow-edge.skipped {
-  opacity: 0.15;
-}
-
-.flow-edge.conflict {
-  border-color: #ef4444;
-  opacity: 0.6;
-}
-
-.flow-toggle {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.flow-toggle button {
-  background: #e2e8f0;
-  color: #0f172a;
-  border: none;
-  border-radius: 999px;
-  padding: 8px 14px;
-  font-size: 12px;
-}
-
-.flow-toggle button.active {
-  background: #0f172a;
-  color: #ffffff;
+.agent-point.skipped rect {
+  stroke: rgba(148, 163, 184, 0.5);
+  fill: rgba(148, 163, 184, 0.1);
 }
 
 .comm-overlay {
@@ -445,42 +464,42 @@ button.voice .dot {
   opacity: 0.8;
 }
 
-.flow-details {
-  display: grid;
-  gap: 16px;
-}
-
-.triage-box {
-  background: #f8fafc;
-  border-radius: 16px;
-  padding: 14px;
-}
-
-.triage-box summary {
-  cursor: pointer;
-  font-weight: 600;
-}
-
 .triage-meta {
-  margin-top: 8px;
   display: grid;
   gap: 4px;
   font-size: 12px;
   color: #64748b;
 }
 
+.triage-card summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
 .agent-output {
-  background: #0f172a;
+  background: #0b1220;
   color: #e2e8f0;
   border-radius: 16px;
   padding: 14px;
   min-height: 220px;
+  overflow: auto;
+  max-height: 480px;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .agent-output pre {
   white-space: pre-wrap;
-  font-size: 11px;
+  font-size: 12px;
+  line-height: 1.6;
   color: #e2e8f0;
+  max-height: none;
+  margin: 0;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .agent-header {
@@ -507,6 +526,78 @@ button.voice .dot {
 .agent-explanation {
   font-size: 12px;
   margin: 0 0 10px;
+}
+
+.agent-flow-legend {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.legend {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+.legend.ran {
+  background: rgba(34, 197, 94, 0.2);
+  color: #15803d;
+}
+
+.legend.skipped {
+  background: rgba(148, 163, 184, 0.2);
+  color: #64748b;
+}
+
+.legend.conflict {
+  background: rgba(239, 68, 68, 0.2);
+  color: #b91c1c;
+}
+
+.flow-container {
+  display: grid;
+  gap: 10px;
+}
+
+.flow-arc-graph {
+  width: 100%;
+  height: 220px;
+}
+
+.flow-legend-row {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  padding: 0 4px;
+}
+
+.flow-legend-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.flow-legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #0f172a;
+  flex-shrink: 0;
+}
+
+.flow-legend-count {
+  font-weight: 600;
+  color: #0f172a;
+  font-size: 10px;
+  background: #f1f5f9;
+  padding: 2px 6px;
+  border-radius: 999px;
 }
 
 .flow-graph,
@@ -559,11 +650,14 @@ button.voice .dot {
 .topic-card.updated {
   border-color: #fde68a;
   background: #fffbeb;
+  box-shadow: 0 8px 18px -16px rgba(245, 158, 11, 0.35);
 }
 
 .topic-card.conflict {
   border-color: #fecaca;
   background: #fef2f2;
+  box-shadow: 0 12px 24px -18px rgba(239, 68, 68, 0.45);
+  transform: translateY(-2px);
 }
 
 .cluster-list {
@@ -649,33 +743,42 @@ button.voice .dot {
   color: #0f172a;
 }
 
-.line-chart {
+.knowledge-pulse {
   width: 100%;
 }
 
-.distribution {
-  display: grid;
-  gap: 8px;
+.pulse-area {
+  fill: url(#pulseGradient);
 }
 
-.distribution-row {
-  display: grid;
-  grid-template-columns: 1fr 2fr auto;
-  gap: 8px;
-  align-items: center;
-  font-size: 12px;
+.pulse-line {
+  stroke: #0ea5e9;
+  stroke-width: 3;
+  fill: none;
 }
 
-.distribution-row .pill {
-  height: 10px;
-  background: #e2e8f0;
-  border-radius: 999px;
-  overflow: hidden;
+.pulse-bar {
+  fill: rgba(14, 165, 233, 0.08);
 }
 
-.distribution-row .pill div {
-  height: 100%;
-  background: #6366f1;
+.pulse-dot {
+  fill: #0f172a;
+}
+
+.pulse-dot.active {
+  fill: #0ea5e9;
+  animation: pulseGlow 1.6s ease-in-out infinite;
+}
+
+.axis-line {
+  stroke: rgba(148, 163, 184, 0.6);
+  stroke-width: 1;
+}
+
+.axis-label {
+  font-size: 10px;
+  fill: #64748b;
+  letter-spacing: 0.04em;
 }
 
 .timeline-list {
@@ -684,6 +787,10 @@ button.voice .dot {
   margin: 0;
   display: grid;
   gap: 14px;
+}
+
+.timeline-list.compact {
+  gap: 10px;
 }
 
 .timeline-list li {
@@ -820,7 +927,29 @@ button.voice .dot {
   }
 }
 
+@keyframes flowPulse {
+  0% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: -40;
+  }
+}
+
+@keyframes pulseGlow {
+  0%,
+  100% {
+    r: 5;
+    opacity: 0.6;
+  }
+  50% {
+    r: 7;
+    opacity: 1;
+  }
+}
+
 @media (max-width: 1200px) {
+  .panel.stakeholder-map,
   .panel.flow,
   .panel.knowledge,
   .panel.clusters,
@@ -831,8 +960,15 @@ button.voice .dot {
     grid-column: span 12;
   }
 
-  .flow-layout {
+  .agent-flow-grid {
     grid-template-columns: 1fr;
+  }
+
+  .flow-card,
+  .output-card,
+  .timeline-card {
+    grid-column: span 1;
+    grid-row: auto;
   }
 }
 
