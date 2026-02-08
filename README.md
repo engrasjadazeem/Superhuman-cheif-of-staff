@@ -71,6 +71,7 @@ Environment variables:
 - `OPENAI_API_KEY` (required)
 - `CSV_PATH` (default: `/Users/asjadazeem/Downloads/emails.csv`)
 - `CSV_RECORD_LIMIT` (default: `100`)
+- `DEMO_MAX_RECORDS` (default: `200`) hard cap for demos
 - `BATCH_INTERVAL_SECONDS` (default: `30`)
 - `BATCH_SIZE` (default: `10`)
 - `PORT` (default: `3001`)

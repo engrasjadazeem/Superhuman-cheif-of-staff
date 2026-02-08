@@ -129,8 +129,6 @@ export default function App() {
   const [agentRuns, setAgentRuns] = useState<AgentRunSnapshot>(null);
   const [selectedAgent, setSelectedAgent] = useState<AgentRunInfo | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showReasoning, setShowReasoning] = useState(true);
-  const [showCommunication, setShowCommunication] = useState(true);
 
   const previousMetrics = useRef({
     people: 0,
@@ -302,15 +300,22 @@ export default function App() {
       return { nodes: [], links: [] };
     }
 
-    const uniqueEmails = Array.from(
-      new Set([
-        ...people.map((person) => person.email),
-        ...flows.map((flow) => flow.from),
-        ...flows.map((flow) => flow.to)
-      ])
-    );
+    // Count total interactions per person (sent + received)
+    const interactionCount = new Map<string, number>();
+    for (const flow of flows) {
+      interactionCount.set(flow.from, (interactionCount.get(flow.from) ?? 0) + 1);
+      interactionCount.set(flow.to, (interactionCount.get(flow.to) ?? 0) + 1);
+    }
 
-    const nodes = uniqueEmails.map((email, index) => {
+    // Top N people by interaction count
+    const topEmails = Array.from(interactionCount.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([email]) => email);
+
+    const topSet = new Set(topEmails);
+
+    const nodes = topEmails.map((email, index) => {
       const person = people.find((item) => item.email === email);
       return {
         email,
@@ -320,16 +325,21 @@ export default function App() {
       };
     });
 
+    // Only keep links between top people, merge directions
     const linkMap = new Map<string, number>();
     for (const flow of flows) {
-      const key = `${flow.from}->${flow.to}`;
-      linkMap.set(key, (linkMap.get(key) ?? 0) + 1);
+      if (!topSet.has(flow.from) || !topSet.has(flow.to)) continue;
+      const pair = [flow.from, flow.to].sort().join("||");
+      linkMap.set(pair, (linkMap.get(pair) ?? 0) + 1);
     }
 
-    const links = Array.from(linkMap.entries()).map(([key, count]) => {
-      const [from, to] = key.split("->");
-      return { from, to, count };
-    });
+    const links = Array.from(linkMap.entries())
+      .map(([key, count]) => {
+        const [from, to] = key.split("||");
+        return { from, to, count };
+      })
+      .sort((a, b) => b.count - a.count)
+      .slice(0, 12);
 
     return { nodes, links };
   }, [updates?.informationFlow, people]);
@@ -348,22 +358,23 @@ export default function App() {
     return points.length ? points : [{ x: 0, y: 0 }];
   }, [updates?.knowledgeUpdates]);
 
-  const topicDistribution = useMemo(() => {
-    const buckets: Record<string, number> = {};
-    for (const person of people) {
-      for (const topic of person.topics) {
-        buckets[topic] = (buckets[topic] ?? 0) + 1;
-      }
-    }
-    return Object.entries(buckets)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 6);
-  }, [people]);
-
   const summarySignals = useMemo(() => {
     const stable = topics.filter((topic) => !topic.isConflicting && topic.confidence >= 0.7).length;
     const updated = topics.filter((topic) => topic.isNew || topic.confidence < 0.7).length;
     return { stable, updated };
+  }, [topics]);
+
+  const sortedTopics = useMemo(() => {
+    const score = (topic: Topic) => {
+      if (topic.isConflicting) return 3;
+      if (topic.isNew || topic.confidence < 0.6) return 2;
+      return 1;
+    };
+    return [...topics].sort((a, b) => {
+      const byPriority = score(b) - score(a);
+      if (byPriority !== 0) return byPriority;
+      return new Date(b.lastUpdatedAt).getTime() - new Date(a.lastUpdatedAt).getTime();
+    });
   }, [topics]);
 
   const spotlightPeople = useMemo(() => {
@@ -379,15 +390,39 @@ export default function App() {
 
   const stakeholderMap = useMemo(() => {
     const nodes = people.slice(0, 8);
-    const topicNodes = topics.slice(0, 8);
-    const links = nodes.flatMap((person) =>
-      person.topics.slice(0, 3).map((topic) => ({
-        from: person.email,
-        to: topic
-      }))
-    );
-    return { nodes, topicNodes, links };
-  }, [people, topics]);
+    const flows = updates?.informationFlow ?? [];
+
+    const topicSet = new Set(topics.map((topic) => topic.topic));
+    const derivedTopics = Array.from(new Set(flows.map((flow) => flow.topic))).filter(Boolean);
+    const mergedTopics: Topic[] = [
+      ...topics,
+      ...derivedTopics
+        .filter((topic) => !topicSet.has(topic))
+        .map((topic) => ({
+          topic,
+          latestSummary: "Derived from communication flow",
+          confidence: 0.4,
+          isNew: true,
+          isConflicting: false,
+          lastUpdatedAt: new Date().toISOString()
+        }))
+    ];
+    const topicNodes = mergedTopics.slice(0, 8);
+    const topicNodeSet = new Set(topicNodes.map((topic) => topic.topic));
+
+    const nodeSet = new Set(nodes.map((node) => node.email));
+    const linkMap = new Map<string, { from: string; to: string }>();
+    for (const flow of flows) {
+      if (!nodeSet.has(flow.from)) continue;
+      if (!topicNodeSet.has(flow.topic)) continue;
+      const key = `${flow.from}-${flow.topic}`;
+      if (!linkMap.has(key)) {
+        linkMap.set(key, { from: flow.from, to: flow.topic });
+      }
+    }
+
+    return { nodes, topicNodes, links: Array.from(linkMap.values()) };
+  }, [people, topics, updates?.informationFlow]);
 
   const agentGraph = useMemo(() => {
     const order = ["Ingestion", "Triage", "Knowledge", "Stakeholder", "Memory", "Critic", "Coordinator"];
@@ -480,11 +515,6 @@ export default function App() {
                 <strong>{summarySignals.stable}</strong> stable topics, <strong>{summarySignals.updated}</strong> recently
                 updated.
               </p>
-              <div className="pill-row">
-                <span className="pill stable">Stable</span>
-                <span className="pill updated">Updated</span>
-                <span className="pill conflict">Conflicted</span>
-              </div>
             </div>
             <div className="brief-card">
               <span className="label">People Spotlight</span>
@@ -521,60 +551,81 @@ export default function App() {
 
         <section className="panel agent-flow">
           <div className="panel-header">
-            <h2>🧠 Agent Reasoning Flow</h2>
+            <h2>Agent Reasoning Flow</h2>
             <span className="subtle">Latest batch routing and agent outputs</span>
           </div>
-          <div className="flow-layout">
-            <div className="flow-graph">
-              <AgentFlowGraph agents={agentGraph} onSelect={setSelectedAgent} />
-              <div className="flow-toggle">
-                <button
-                  className={showReasoning ? "active" : ""}
-                  type="button"
-                  onClick={() => setShowReasoning((prev) => !prev)}
-                >
-                  Show agent reasoning
-                </button>
-                <button
-                  className={showCommunication ? "active" : ""}
-                  type="button"
-                  onClick={() => setShowCommunication((prev) => !prev)}
-                >
-                  Show communication flow
-                </button>
+          <div className="agent-flow-legend">
+            <span className="legend ran">Ran</span>
+            <span className="legend skipped">Skipped</span>
+            <span className="legend conflict">Conflict</span>
+          </div>
+          <div className="agent-flow-grid">
+            <div className="agent-card flow-card">
+              <div className="card-header">
+                <h3>Execution Map</h3>
+                <span className="subtle">Click a node to inspect</span>
               </div>
-              <div className="overlay-stack">
-                {showReasoning && <AgentFlowOverlay agents={agentGraph} />}
-                {showCommunication && <CommunicationOverlay nodes={flowGraph.nodes} links={flowGraph.links} />}
+              <div className="flow-graph">
+                <ExecutionMap agents={agentGraph} onSelect={setSelectedAgent} animate />
               </div>
             </div>
-            <div className="flow-details">
-              <div className="triage-box">
+            <div className="agent-card triage-card">
+              <div className="card-header">
                 <h3>Triage Reasoning</h3>
-                <details open>
-                  <summary>Why these agents ran</summary>
-                  <p>{agentRuns?.triageReasoning ?? "No triage reasoning yet."}</p>
-                  <div className="triage-meta">
-                    <span>Ran: {agentRuns?.selectedAgents.join(", ") || "None"}</span>
-                    <span>Skipped: {agentRuns?.skippedAgents.join(", ") || "None"}</span>
-                  </div>
-                </details>
+                <span className="subtle">Why agents ran or skipped</span>
               </div>
-              <div className="agent-output">
+              <details open>
+                <summary>Selection logic</summary>
+                <p>{agentRuns?.triageReasoning ?? "No triage reasoning yet."}</p>
+              </details>
+              <div className="triage-meta">
+                <span>Ran: {agentRuns?.selectedAgents.join(", ") || "None"}</span>
+                <span>Skipped: {agentRuns?.skippedAgents.join(", ") || "None"}</span>
+              </div>
+            </div>
+            <div className="agent-card output-card">
+              <div className="card-header">
                 <h3>Agent Output</h3>
-                {selectedAgent ? (
-                  <>
-                    <div className="agent-header">
-                      <strong>{selectedAgent.name}</strong>
-                      <span className={`agent-status ${selectedAgent.status}`}>{selectedAgent.status}</span>
-                    </div>
-                    <p className="agent-explanation">{selectedAgent.explanation}</p>
-                    <pre>{JSON.stringify(selectedAgent.output ?? {}, null, 2)}</pre>
-                  </>
-                ) : (
-                  <p className="empty">Click an agent node to inspect its output.</p>
-                )}
+                <span className="subtle">Structured JSON</span>
               </div>
+              {selectedAgent ? (
+                <>
+                  <div className="agent-header">
+                    <strong>{selectedAgent.name}</strong>
+                    <span className={`agent-status ${selectedAgent.status}`}>{selectedAgent.status}</span>
+                  </div>
+                  <p className="agent-explanation">{selectedAgent.explanation}</p>
+                  <div className="agent-output">
+                    <pre>{JSON.stringify(selectedAgent.output ?? {}, null, 2)}</pre>
+                  </div>
+                </>
+              ) : (
+                <p className="empty">Click an agent node to inspect its output.</p>
+              )}
+            </div>
+            <div className="agent-card timeline-card">
+              <div className="card-header">
+                <h3>Reasoning Timeline</h3>
+                <span className="subtle">Step-by-step execution</span>
+              </div>
+              {agentRuns?.timeline?.length ? (
+                <ol className="timeline-list compact">
+                  {agentRuns.timeline.map((item, index) => (
+                    <li key={`${item.label}-${index}`}>
+                      <div className={`dot ${item.label.replace(/\s/g, "").toLowerCase()}`} />
+                      <div>
+                        <div className="timeline-header">
+                          <strong>{item.label}</strong>
+                          <span>{formatShortTimestamp(item.timestamp)}</span>
+                        </div>
+                        <p className="timeline-summary">{item.detail}</p>
+                      </div>
+                    </li>
+                  ))}
+                </ol>
+              ) : (
+                <p className="empty">No reasoning timeline yet.</p>
+              )}
             </div>
           </div>
         </section>
@@ -590,12 +641,9 @@ export default function App() {
         <section className="panel flow">
           <div className="panel-header">
             <h2>Communication Flow</h2>
-            <span className="subtle">Edges scale by interaction frequency</span>
+            <span className="subtle">Top connections · arc height = interaction volume</span>
           </div>
           <FlowGraph nodes={flowGraph.nodes} links={flowGraph.links} />
-          <div className="insight">
-            High-frequency links are bolded. Isolated nodes fade. Large nodes indicate heavy message load.
-          </div>
         </section>
 
         <section className="panel knowledge">
@@ -607,7 +655,7 @@ export default function App() {
             <p className="empty">No topics captured yet.</p>
           ) : (
             <div className="topics">
-              {topics.map((topic) => {
+              {sortedTopics.map((topic) => {
                 const tone = topic.isConflicting
                   ? "conflict"
                   : topic.isNew || topic.confidence < 0.6
@@ -666,11 +714,8 @@ export default function App() {
             <ChartCard title="Messages per Person">
               <BarChart data={messageCounts.data} maxValue={messageCounts.max} />
             </ChartCard>
-            <ChartCard title="Knowledge Updates Over Time">
-              <LineChart points={updatesOverTime} />
-            </ChartCard>
-            <ChartCard title="Topics by Stakeholder">
-              <DistributionChart entries={topicDistribution} />
+            <ChartCard title="Knowledge Momentum">
+              <KnowledgePulseChart points={updatesOverTime} />
             </ChartCard>
           </div>
         </section>
@@ -727,31 +772,6 @@ export default function App() {
               )}
             </div>
           </div>
-        </section>
-
-        <section className="panel timeline">
-          <div className="panel-header">
-            <h2>Reasoning Timeline</h2>
-            <span className="subtle">Step-by-step agentic reasoning</span>
-          </div>
-          {agentRuns?.timeline?.length ? (
-            <ol className="timeline-list">
-              {agentRuns.timeline.map((item, index) => (
-                <li key={`${item.label}-${index}`}>
-                  <div className={`dot ${item.label.replace(/\s/g, "").toLowerCase()}`} />
-                  <div>
-                    <div className="timeline-header">
-                      <strong>{item.label}</strong>
-                      <span>{formatShortTimestamp(item.timestamp)}</span>
-                    </div>
-                    <p className="timeline-summary">{item.detail}</p>
-                  </div>
-                </li>
-              ))}
-            </ol>
-          ) : (
-            <p className="empty">No reasoning timeline yet.</p>
-          )}
         </section>
 
         <section className="panel recommendations">
@@ -830,135 +850,158 @@ function BarChart({ data, maxValue }: { data: Person[]; maxValue: number }) {
   );
 }
 
-function LineChart({ points }: { points: { x: number; y: number }[] }) {
-  const width = 240;
-  const height = 120;
+function KnowledgePulseChart({ points }: { points: { x: number; y: number }[] }) {
+  const width = 300;
+  const height = 140;
   const maxY = Math.max(...points.map((point) => point.y), 1);
-  const path = points
-    .map((point, index) => {
-      const x = (point.x / (points.length - 1 || 1)) * (width - 20) + 10;
-      const y = height - (point.y / maxY) * (height - 20) - 10;
-      return `${index === 0 ? "M" : "L"}${x} ${y}`;
-    })
-    .join(" ");
+  const paddingLeft = 30;
+  const paddingBottom = 20;
+  const coords = points.map((point, index) => {
+    const x = (point.x / (points.length - 1 || 1)) * (width - paddingLeft - 10) + paddingLeft;
+    const y = height - paddingBottom - (point.y / maxY) * (height - paddingBottom - 10);
+    return { x, y };
+  });
+
+  const line = coords.map((point, index) => `${index === 0 ? "M" : "L"}${point.x} ${point.y}`).join(" ");
+  const area = `${line} L ${coords[coords.length - 1].x} ${height - paddingBottom} L ${coords[0].x} ${
+    height - paddingBottom
+  } Z`;
 
   return (
-    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} className="line-chart">
-      <path d={path} fill="none" stroke="#0ea5e9" strokeWidth="3" strokeLinecap="round" />
-      {points.map((point, index) => {
-        const x = (point.x / (points.length - 1 || 1)) * (width - 20) + 10;
-        const y = height - (point.y / maxY) * (height - 20) - 10;
-        return <circle key={index} cx={x} cy={y} r="3" fill="#0f172a" />;
-      })}
+    <svg width="100%" height={height} viewBox={`0 0 ${width} ${height}`} className="knowledge-pulse">
+      <defs>
+        <linearGradient id="pulseGradient" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="rgba(14, 165, 233, 0.35)" />
+          <stop offset="100%" stopColor="rgba(14, 165, 233, 0)" />
+        </linearGradient>
+      </defs>
+      <line x1={paddingLeft} y1={10} x2={paddingLeft} y2={height - paddingBottom} className="axis-line" />
+      <line x1={paddingLeft} y1={height - paddingBottom} x2={width - 10} y2={height - paddingBottom} className="axis-line" />
+      <text x={width / 2} y={height - 4} textAnchor="middle" className="axis-label">
+        Time
+      </text>
+      <text x={10} y={height / 2} textAnchor="middle" className="axis-label" transform={`rotate(-90 10 ${height / 2})`}>
+        Updates
+      </text>
+      {coords.map((point, index) => (
+        <rect
+          key={`bar-${index}`}
+          x={point.x - 6}
+          y={point.y}
+          width={12}
+          height={height - paddingBottom - point.y}
+          className="pulse-bar"
+        />
+      ))}
+      <path d={area} className="pulse-area" />
+      <path d={line} className="pulse-line" />
+      {coords.map((point, index) => (
+        <circle
+          key={`dot-${index}`}
+          cx={point.x}
+          cy={point.y}
+          r={index === coords.length - 1 ? 5 : 3}
+          className={`pulse-dot ${index === coords.length - 1 ? "active" : ""}`}
+        />
+      ))}
     </svg>
   );
 }
 
-function DistributionChart({ entries }: { entries: [string, number][] }) {
-  if (entries.length === 0) {
-    return <p className="empty">No data yet.</p>;
-  }
-  const total = entries.reduce((sum, entry) => sum + entry[1], 0) || 1;
-  return (
-    <div className="distribution">
-      {entries.map(([label, value]) => (
-        <div key={label} className="distribution-row">
-          <span>{label}</span>
-          <div className="pill">
-            <div style={{ width: `${clamp((value / total) * 100, 5, 100)}%` }} />
-          </div>
-          <span className="value">{value}</span>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function AgentFlowGraph({
+function ExecutionMap({
   agents,
-  onSelect
+  onSelect,
+  animate
 }: {
   agents: AgentRunInfo[];
   onSelect: (agent: AgentRunInfo) => void;
+  animate: boolean;
 }) {
   if (!agents.length) {
     return <p className="empty">No agent run data yet.</p>;
   }
-  return (
-    <div className="agent-nodes">
-      {agents.map((agent) => (
-        <button
-          key={agent.name}
-          type="button"
-          className={`agent-node ${agent.status}`}
-          onClick={() => onSelect(agent)}
-        >
-          <span>{agent.name}</span>
-          <small>{agent.status}</small>
-        </button>
-      ))}
-    </div>
-  );
-}
 
-function AgentFlowOverlay({ agents }: { agents: AgentRunInfo[] }) {
-  if (!agents.length) return null;
-  return (
-    <div className="agent-flow-overlay">
-      {agents.map((agent, index) => (
-        <div
-          key={`${agent.name}-${index}`}
-          className={`flow-edge ${agent.status}`}
-          style={{
-            top: 24 + index * 44
-          }}
-        />
-      ))}
-    </div>
-  );
-}
+  const agentMap = new Map(agents.map((agent) => [agent.name, agent]));
+  const getStatus = (name: AgentRunInfo["name"]) => agentMap.get(name)?.status ?? "skipped";
 
-function CommunicationOverlay({
-  nodes,
-  links
-}: {
-  nodes: { email: string; label: string; index: number; messageCount: number }[];
-  links: { from: string; to: string; count: number }[];
-}) {
-  if (nodes.length === 0) return null;
-  const maxCount = Math.max(...links.map((link) => link.count), 1);
+  const nodeWidth = 110;
+  const nodeHeight = 52;
+  const nodeMeta = [
+    { name: "Ingestion" as const, x: 70, y: 120, role: "Parse" },
+    { name: "Triage" as const, x: 210, y: 120, role: "Route" },
+    { name: "Knowledge" as const, x: 350, y: 40, role: "Extract" },
+    { name: "Stakeholder" as const, x: 350, y: 120, role: "Map" },
+    { name: "Memory" as const, x: 350, y: 200, role: "Version" },
+    { name: "Critic" as const, x: 480, y: 120, role: "Audit" },
+    { name: "Coordinator" as const, x: 620, y: 120, role: "Brief" }
+  ];
+
+  const edges = [
+    { from: "Ingestion" as const, to: "Triage" as const },
+    { from: "Triage" as const, to: "Knowledge" as const },
+    { from: "Triage" as const, to: "Stakeholder" as const },
+    { from: "Triage" as const, to: "Memory" as const },
+    { from: "Knowledge" as const, to: "Critic" as const },
+    { from: "Stakeholder" as const, to: "Critic" as const },
+    { from: "Memory" as const, to: "Critic" as const },
+    { from: "Critic" as const, to: "Coordinator" as const }
+  ];
+
+  const edgeStatus = (from: AgentRunInfo["name"], to: AgentRunInfo["name"]) => {
+    const fromStatus = getStatus(from);
+    const toStatus = getStatus(to);
+    if (fromStatus === "skipped" || toStatus === "skipped") return "skipped";
+    if (toStatus === "conflict") return "conflict";
+    return "ran";
+  };
+
   return (
-    <svg viewBox="0 0 300 220" className="comm-overlay">
-      {links.map((link, index) => {
-        const fromIndex = nodes.findIndex((node) => node.email === link.from);
-        const toIndex = nodes.findIndex((node) => node.email === link.to);
-        const fromX = 40 + (fromIndex % 4) * 70;
-        const fromY = 40 + Math.floor(fromIndex / 4) * 60;
-        const toX = 40 + (toIndex % 4) * 70;
-        const toY = 40 + Math.floor(toIndex / 4) * 60;
-        const strokeWidth = 1 + (link.count / maxCount) * 4;
+    <svg viewBox="0 0 680 260" className={`execution-map ${animate ? "animate" : ""}`}>
+      <defs>
+        <marker id="arrow" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
+          <path d="M0,0 L6,3 L0,6 Z" fill="currentColor" />
+        </marker>
+      </defs>
+      {edges.map((edge, index) => {
+        const from = nodeMeta.find((node) => node.name === edge.from);
+        const to = nodeMeta.find((node) => node.name === edge.to);
+        if (!from || !to) return null;
+        const fromX = from.x + nodeWidth / 2;
+        const toX = to.x - nodeWidth / 2;
+        const fromY = from.y;
+        const toY = to.y;
+        const status = edgeStatus(edge.from, edge.to);
         return (
-          <line
+          <path
             key={index}
-            x1={fromX}
-            y1={fromY}
-            x2={toX}
-            y2={toY}
-            stroke="#60a5fa"
-            strokeWidth={strokeWidth}
-            opacity={0.4}
+            d={`M ${fromX} ${fromY} C ${fromX + 30} ${fromY}, ${toX - 30} ${toY}, ${toX} ${toY}`}
+            className={`edge ${status}`}
+            markerEnd="url(#arrow)"
           />
         );
       })}
-      {nodes.map((node, index) => {
-        const x = 40 + (index % 4) * 70;
-        const y = 40 + Math.floor(index / 4) * 60;
-        const r = 6 + Math.min(node.messageCount, 6);
+      {nodeMeta.map((node) => {
+        const status = getStatus(node.name);
+        const agent = agentMap.get(node.name);
         return (
-          <g key={node.email}>
-            <circle cx={x} cy={y} r={r} fill="#1e3a8a" opacity={0.75} />
-            <text x={x} y={y + 18} textAnchor="middle" fontSize="8" fill="#1f2937">
-              {node.label.split("@")[0]}
+          <g
+            key={node.name}
+            className={`agent-point ${status}`}
+            onClick={() => agent && onSelect(agent)}
+            style={{ cursor: agent ? "pointer" : "default" }}
+          >
+            <rect
+              x={node.x - nodeWidth / 2}
+              y={node.y - nodeHeight / 2}
+              width={nodeWidth}
+              height={nodeHeight}
+              rx={14}
+            />
+            <text x={node.x} y={node.y - 4} textAnchor="middle">
+              {node.name}
+            </text>
+            <text x={node.x} y={node.y + 14} textAnchor="middle" className="agent-role">
+              {node.role}
             </text>
           </g>
         );
@@ -978,68 +1021,85 @@ function FlowGraph({
     return <p className="empty">No communication flow yet.</p>;
   }
 
-  const radius = 115;
-  const center = 150;
-  const angleStep = (Math.PI * 2) / nodes.length;
   const maxCount = Math.max(...links.map((link) => link.count), 1);
   const maxMessages = Math.max(...nodes.map((node) => node.messageCount), 1);
-  const minMessages = Math.min(...nodes.map((node) => node.messageCount), 0);
 
-  const positions = new Map(
-    nodes.map((node, index) => {
-      const angle = index * angleStep - Math.PI / 2;
-      return [
-        node.email,
-        {
-          x: center + radius * Math.cos(angle),
-          y: center + radius * Math.sin(angle)
-        }
-      ];
-    })
+  // Horizontal layout: nodes spaced along the bottom, arcs above
+  const svgWidth = 560;
+  const nodeY = 200;
+  const padding = 50;
+  const spacing = nodes.length > 1 ? (svgWidth - padding * 2) / (nodes.length - 1) : 0;
+
+  const posMap = new Map(
+    nodes.map((node, i) => [
+      node.email,
+      { x: padding + i * spacing, y: nodeY, i }
+    ])
   );
 
+  const colors = ["#38bdf8", "#6366f1", "#a855f7", "#ec4899", "#f59e0b", "#22c55e"];
+
   return (
-    <svg viewBox="0 0 300 300" className="flow-graph">
-      <defs>
-        <linearGradient id="flowGradient" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0%" stopColor="#38bdf8" />
-          <stop offset="100%" stopColor="#6366f1" />
-        </linearGradient>
-      </defs>
-      {links.map((link, index) => {
-        const from = positions.get(link.from);
-        const to = positions.get(link.to);
-        if (!from || !to) return null;
-        const strokeWidth = 1 + (link.count / maxCount) * 5;
-        return (
-          <line
-            key={index}
-            x1={from.x}
-            y1={from.y}
-            x2={to.x}
-            y2={to.y}
-            stroke="url(#flowGradient)"
-            strokeWidth={strokeWidth}
-            opacity={0.55}
-          />
-        );
-      })}
-      {nodes.map((node) => {
-        const point = positions.get(node.email);
-        if (!point) return null;
-        const size = 8 + (node.messageCount / maxMessages) * 10;
-        const opacity = node.messageCount <= minMessages + 1 ? 0.5 : 1;
-        return (
-          <g key={node.email} opacity={opacity}>
-            <circle cx={point.x} cy={point.y} r={size} fill="#0f172a" />
-            <circle cx={point.x} cy={point.y} r={size + 4} fill="none" stroke="#38bdf8" opacity={0.3} />
-            <text x={point.x} y={point.y + size + 14} textAnchor="middle" fontSize="10" fill="#475569">
-              {node.label.split("@")[0]}
-            </text>
-          </g>
-        );
-      })}
-    </svg>
+    <div className="flow-container">
+      <svg viewBox={`0 0 ${svgWidth} 240`} className="flow-arc-graph">
+        <defs>
+          {colors.map((color, i) => (
+            <linearGradient key={i} id={`arc-${i}`} x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stopColor={color} stopOpacity="0.6" />
+              <stop offset="50%" stopColor={color} stopOpacity="0.25" />
+              <stop offset="100%" stopColor={color} stopOpacity="0.6" />
+            </linearGradient>
+          ))}
+        </defs>
+
+        {links.map((link, index) => {
+          const from = posMap.get(link.from);
+          const to = posMap.get(link.to);
+          if (!from || !to) return null;
+          const dist = Math.abs(from.x - to.x);
+          const arcHeight = 30 + dist * 0.55;
+          const midX = (from.x + to.x) / 2;
+          const midY = nodeY - arcHeight;
+          const weight = link.count / maxCount;
+          const strokeWidth = 1.5 + weight * 3;
+          const colorIndex = index % colors.length;
+          return (
+            <path
+              key={index}
+              d={`M ${from.x} ${nodeY} Q ${midX} ${midY} ${to.x} ${nodeY}`}
+              fill="none"
+              stroke={`url(#arc-${colorIndex})`}
+              strokeWidth={strokeWidth}
+              strokeLinecap="round"
+            />
+          );
+        })}
+
+        {nodes.map((node) => {
+          const pos = posMap.get(node.email);
+          if (!pos) return null;
+          const size = 5 + (node.messageCount / maxMessages) * 7;
+          return (
+            <g key={node.email}>
+              <circle cx={pos.x} cy={nodeY} r={size + 3} fill="none" stroke="#38bdf8" opacity={0.15} />
+              <circle cx={pos.x} cy={nodeY} r={size} fill="#0f172a" />
+              <text x={pos.x} y={nodeY + size + 14} textAnchor="middle" fontSize="9" fill="#64748b">
+                {node.label.split("@")[0]}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <div className="flow-legend-row">
+        {nodes.slice(0, 4).map((node) => (
+          <div key={node.email} className="flow-legend-item">
+            <span className="flow-legend-dot" />
+            <span>{node.label.split("@")[0]}</span>
+            <span className="flow-legend-count">{node.messageCount}</span>
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
